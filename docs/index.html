@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather Paper — a battery-powered e-paper weather display</title>
+<meta name="description" content="Weather Paper: a 5.79&Prime; e-paper weather display. National Weather Service forecast, months of battery life, five-minute setup.">
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --muted: #5a5a5a;
+    --faint: #8a8a8a;
+    --accent: #cc4400;
+    --line: #e3e0da;
+    --bg: #fcfbf9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--bg);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px 96px; }
+  header { text-align: center; padding: 48px 24px 8px; }
+  header .logo { max-width: 480px; width: 100%; height: auto; display: block; margin: 0 auto; }
+  .tagline { color: var(--muted); font-size: 18px; margin: 14px 0 0; }
+  h1 { font-size: 28px; letter-spacing: -0.01em; margin: 56px 0 8px; }
+  h2 { font-size: 22px; letter-spacing: -0.01em; margin: 48px 0 6px; }
+  .lede { color: var(--muted); font-size: 18px; margin: 0 0 8px; }
+  p { margin: 10px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.92em;
+  }
+  .pill {
+    display: inline-block; background: #fff; border: 1px solid var(--line);
+    border-radius: 999px; padding: 2px 12px; font-size: 13px; color: var(--muted);
+  }
+  ol.steps { margin: 12px 0; padding-left: 22px; }
+  ol.steps li { margin: 8px 0; }
+  ol.steps li::marker { color: var(--accent); font-weight: 700; }
+  .shot {
+    display: block; width: 100%; height: auto; margin: 20px 0 6px;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    image-rendering: pixelated;
+  }
+  .caption { color: var(--faint); font-size: 13px; margin: 0 0 28px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+  .card h3 { margin: 0 0 6px; font-size: 15px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+  .note {
+    border-left: 3px solid var(--accent); background: #fff;
+    padding: 10px 16px; margin: 16px 0; border-radius: 0 6px 6px 0;
+    font-size: 14px; color: var(--muted);
+  }
+  .kbd {
+    display: inline-block; font-family: inherit; font-size: 12px; font-weight: 700;
+    background: #fff; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 7px; color: var(--ink);
+  }
+  table.btns { border-collapse: collapse; margin: 12px 0; width: 100%; }
+  table.btns th, table.btns td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 15px;
+  }
+  table.btns th { color: var(--faint); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.settings { border-collapse: collapse; margin: 14px 0; width: 100%; }
+  table.settings th, table.settings td {
+    text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); font-size: 15px; vertical-align: top;
+  }
+  table.settings th { color: var(--faint); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.settings td:first-child { font-weight: 700; white-space: nowrap; }
+  table.settings td:nth-child(2) { white-space: nowrap; color: var(--muted); }
+  table.settings td:last-child { color: var(--muted); }
+  @media (max-width: 620px) { table.settings td:first-child, table.settings td:nth-child(2) { white-space: normal; } }
+  footer { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--faint); font-size: 13px; }
+  @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<header>
+  <img class="logo" src="images/logo.png" alt="Weather Paper">
+  <p class="tagline">A battery-powered weather display. Real National Weather Service conditions and a 7-day forecast on a 5.79&Prime; e-paper screen.</p>
+</header>
+
+<div class="wrap">
+
+  <h1>What it is</h1>
+  <p class="lede">Weather Paper is a small e-paper display that shows your local weather. It wakes once a minute to update the clock, and once an hour to pull fresh conditions and the forecast over Wi-Fi — then goes back to sleep, running for months on a single charge.</p>
+
+  <div class="grid" style="margin-top:16px">
+    <div class="card"><h3>Current conditions</h3><p>Temperature, condition, feels-like, humidity, barometric pressure and dew point — from the National Weather Service, matched to your ZIP code.</p></div>
+    <div class="card"><h3>Wind dial</h3><p>Speed (MPH) and direction on a compass dial, so you can see at a glance which way the weather is coming from.</p></div>
+    <div class="card"><h3>7-day forecast</h3><p>Highs, lows and icons for today and the next six days, with precipitation chance when it matters.</p></div>
+    <div class="card"><h3>Months of battery</h3><p>The low-power e-paper screen only draws when it refreshes. A single charge lasts roughly 2&frac12; months.</p></div>
+  </div>
+
+  <h1>What you need</h1>
+  <ul>
+    <li>An <strong>Elecrow CrowPanel 5.79&Prime; e-paper display</strong> (ESP32-S3).</li>
+    <li>A <strong>USB-C cable</strong> (to flash the firmware and to charge it).</li>
+    <li>A <strong>microSD card</strong>, FAT32 formatted — an empty one is fine; the device writes its own config.</li>
+    <li>A computer with <strong>Chrome or Edge</strong> (for the one-time flash), and a phone on the same Wi-Fi you&rsquo;ll display.</li>
+  </ul>
+
+  <h1>1 &middot; Flash the firmware</h1>
+  <p class="lede">One time, about a minute. No toolchain, no terminal — it all happens in the browser.</p>
+  <ol class="steps">
+    <li><strong>Windows only:</strong> install the <a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html">CH340 USB driver</a> once. macOS and Linux need nothing.</li>
+    <li>Open the <a href="./flash/">flasher page</a> in Chrome or Edge.</li>
+    <li>Plug the display into your computer with USB-C, then click <strong>Connect</strong> and pick the USB serial port.</li>
+    <li>Click <strong>Install</strong>. The firmware writes in about 30 seconds.</li>
+    <li>Insert the microSD card, then unplug and power the display up.</li>
+  </ol>
+
+  <div class="note">Updating to a newer firmware later is the same three clicks. Your Wi-Fi, ZIP and settings live on the SD card, so an update never makes you redo setup.</div>
+
+  <h1>2 &middot; First-time setup</h1>
+  <p class="lede">The display sets itself up over a temporary Wi-Fi network on your phone. About 15 seconds.</p>
+  <ol class="steps">
+    <li>Power on the display. The screen shows <span class="mono">WiFi SETUP</span> and an access-point name like <span class="mono">WeatherPaper-1A2B3C</span>.</li>
+    <li>On your phone, join that Wi-Fi network.</li>
+    <li>Scan the QR code (or open a browser to <span class="mono">192.168.4.1</span>).</li>
+    <li>Pick your home Wi-Fi from the list (or type a hidden network&rsquo;s name), enter its password, and enter your ZIP code.</li>
+    <li>Tap <strong>Save</strong>. The screen shows &ldquo;Connecting to Wi-Fi&hellip;&rdquo; and then your weather.</li>
+  </ol>
+  <img class="shot" src="images/setup.png" alt="WiFi setup screen showing the QR code">
+  <p class="caption">The setup screen: join the shown network, scan the QR, and enter your Wi-Fi + ZIP.</p>
+  <img class="shot" src="images/connecting.png" alt="Connecting to WiFi screen">
+  <p class="caption">After saving, it reports progress. If the password is wrong it returns you to setup to try again.</p>
+
+  <h1>3 &middot; Using it</h1>
+  <p class="lede">The top strip is the clock, date and a mini calendar. The middle is the current weather and the wind dial. The bottom is the 7-day forecast.</p>
+  <img class="shot" src="images/main.png" alt="The main weather display">
+  <p class="caption">The main screen: time, date, calendar, current temperature and conditions, humidity / pressure / dew point / feels-like bars, the wind dial, and the 7-day forecast.</p>
+
+  <table class="settings">
+    <tr><th>Element</th><th>Area</th><th>What it shows</th></tr>
+    <tr><td>Clock</td><td>Top</td><td>Current time &mdash; 24-hour, AM/PM, or UTC.</td></tr>
+    <tr><td>Date</td><td>Top</td><td>Full weekday name, month, and day.</td></tr>
+    <tr><td>Calendar</td><td>Top</td><td>Mini month view; today&rsquo;s date is filled in.</td></tr>
+    <tr><td>Status</td><td>Top right</td><td>Wi-Fi signal (RSSI), ZIP code, weather station, and last-update time.</td></tr>
+    <tr><td>Condition icon</td><td>Middle</td><td>Current weather &mdash; sun, cloud, rain, snow, etc.</td></tr>
+    <tr><td>Precip. chance</td><td>Middle</td><td>Today&rsquo;s percent chance of precipitation.</td></tr>
+    <tr><td>Temperature</td><td>Middle</td><td>Current temperature in &deg;F or &deg;C.</td></tr>
+    <tr><td>Wind dial</td><td>Middle</td><td>Wind speed (MPH) and direction.</td></tr>
+    <tr><td>HMD</td><td>Middle</td><td>Relative humidity.</td></tr>
+    <tr><td>PRS</td><td>Middle</td><td>Barometric pressure (inHg or hPa).</td></tr>
+    <tr><td>DPT</td><td>Middle</td><td>Dew point.</td></tr>
+    <tr><td>FEEL</td><td>Middle</td><td>Feels-like temperature (wind chill, heat index, or ambient).</td></tr>
+    <tr><td>7-day forecast</td><td>Bottom</td><td>Today + 6 days: condition icon, high, low, and precipitation chance.</td></tr>
+  </table>
+
+  <div style="margin:24px 0 6px">
+    <svg viewBox="0 0 360 320" width="100%" style="max-width:360px;height:auto;display:block;margin:0 auto" role="img" aria-label="Side view of the controls: MENU button at top, rotary wheel in the middle, EXIT button at bottom">
+      <rect x="150" y="16" width="14" height="288" rx="4" fill="#1a1a1a"/>
+      <rect x="104" y="46" width="46" height="30" rx="5" fill="#ffffff" stroke="#1a1a1a" stroke-width="2"/>
+      <rect x="104" y="246" width="46" height="30" rx="5" fill="#ffffff" stroke="#1a1a1a" stroke-width="2"/>
+      <circle cx="118" cy="160" r="34" fill="#ffffff" stroke="#1a1a1a" stroke-width="2"/>
+      <line x1="118" y1="126" x2="118" y2="134" stroke="#1a1a1a" stroke-width="2"/>
+      <line x1="94" y1="130" x2="100" y2="136" stroke="#1a1a1a" stroke-width="2"/>
+      <line x1="142" y1="130" x2="136" y2="136" stroke="#1a1a1a" stroke-width="2"/>
+      <line x1="64" y1="160" x2="82" y2="160" stroke="#cc4400" stroke-width="2" marker-end="url(#sparr)"/>
+      <text x="72" y="146" text-anchor="middle" font-size="11" fill="#cc4400">push</text>
+      <text x="180" y="58" font-size="14" font-weight="700" fill="#1a1a1a">MENU</text>
+      <text x="180" y="75" font-size="11" fill="#5a5a5a">press</text>
+      <text x="180" y="163" font-size="14" font-weight="700" fill="#1a1a1a">WHEEL</text>
+      <text x="180" y="180" font-size="11" fill="#5a5a5a">roll &uarr;&darr; &middot; push in</text>
+      <text x="180" y="261" font-size="14" font-weight="700" fill="#1a1a1a">EXIT</text>
+      <text x="180" y="278" font-size="11" fill="#5a5a5a">press</text>
+      <defs>
+        <marker id="sparr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#cc4400"/>
+        </marker>
+      </defs>
+    </svg>
+    <p class="caption" style="text-align:center;margin:6px 0 0">Side view: MENU and EXIT are push buttons; the wheel rolls up/down and pushes in.</p>
+  </div>
+
+  <table class="btns">
+    <tr><th>Control</th><th>Does</th></tr>
+    <tr><td><span class="kbd">MENU</span> (top button)</td><td>Open settings</td></tr>
+    <tr><td><span class="kbd">EXIT</span> (bottom button)</td><td>Go back / close settings</td></tr>
+    <tr><td>Wheel up / down</td><td>Move through settings</td></tr>
+    <tr><td>Push the wheel in</td><td>Refresh weather now (shows a loading screen while it fetches)</td></tr>
+  </table>
+
+  <img class="shot" src="images/loading.png" alt="Loading weather screen">
+  <p class="caption">Push the wheel in to force a refresh — it shows a loading screen until the new conditions arrive.</p>
+
+  <img class="shot" src="images/settings.png" alt="Settings menu">
+  <p class="caption">Settings are reached with the MENU button and changed with the wheel (up/down to move, push in to toggle).</p>
+
+  <table class="settings">
+    <tr><th>Setting</th><th>Options</th><th>What it does</th></tr>
+    <tr><td>WiFi</td><td>ON / OFF</td><td>Turns the Wi-Fi connection on or off. It&rsquo;s used for the clock (time sync) and weather. Turn it off to save battery if you only use a Ruuvi sensor.</td></tr>
+    <tr><td>Weather</td><td>WiFi / Ruuvi</td><td>Picks the data source: <strong>WiFi</strong> = National Weather Service (current conditions + 7-day forecast); <strong>Ruuvi</strong> = a nearby RuuviTag BLE sensor (temp / humidity / pressure).</td></tr>
+    <tr><td>Ruuvi</td><td>ON / OFF</td><td>Enables the RuuviTag BLE sensor. Leave OFF if you don&rsquo;t have one.</td></tr>
+    <tr><td>Temperature</td><td>&deg;F / &deg;C</td><td>Display unit for temperature, dew point, and feels-like.</td></tr>
+    <tr><td>Pressure</td><td>inHg / hPa</td><td>Display unit for barometric pressure.</td></tr>
+    <tr><td>Time Format</td><td>24 Hour / AM-PM / UTC</td><td>How the clock reads. UTC shows Coordinated Universal Time.</td></tr>
+    <tr><td>Screen Refresh</td><td>Full / Partial</td><td>Full redraws the whole screen each refresh (crisper); Partial refreshes faster and uses less power.</td></tr>
+    <tr><td>Update</td><td>1hr / 30min</td><td>How often it fetches fresh weather. 1hr gives the longest battery; 30min keeps the data fresher.</td></tr>
+    <tr><td>Factory Reset</td><td>&mdash;</td><td>Erases Wi-Fi, ZIP, and every setting, then reboots into setup.</td></tr>
+  </table>
+
+  <div class="note"><strong>Battery:</strong> charge over USB-C with any standard charger. The screen stays readable even when the battery is empty — it only needs power to refresh.</div>
+
+  <footer>
+    Weather Paper &middot; ESP32-S3 e-paper weather display &middot; Weather data from the National Weather Service (api.weather.gov).<br>
+    &copy; 2026 SimWidgets, LLC.
+  </footer>
+
+</div>
+</body>
+</html>

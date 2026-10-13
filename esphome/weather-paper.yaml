@@ -1,0 +1,1589 @@
+substitutions:
+  version: "v0.1.0"
+
+esphome:
+  name: weather-paper
+  friendly_name: Weather Paper
+  comment: "CrowPanel 5.79in e-paper weather dashboard"
+  includes:
+    - weather_paper.h
+  on_boot:
+    - priority: 250
+      then:
+        - lambda: |-
+            // sync runtime settings from config.txt
+            id(wifi_on) = id(sd_reader)->get_wifi_enabled();
+            id(temp_c) = id(sd_reader)->get_temp_c();
+            id(press_hpa) = id(sd_reader)->get_press_hpa();
+            id(weather_wifi) = id(sd_reader)->get_weather_wifi();
+            id(full_refresh) = id(sd_reader)->get_full_refresh();
+            id(update_min) = id(sd_reader)->get_update_min();
+            id(lat) = id(sd_reader)->get_lat();
+            id(lon) = id(sd_reader)->get_lon();
+            id(ruuvi_on) = id(sd_reader)->get_ruuvi_enabled();
+            id(time_fmt) = id(sd_reader)->get_time_fmt();
+            id(epd)->set_full_update_every(id(full_refresh) ? 1 : 60);
+            // enter setup mode on first boot (no WiFi credentials)
+            if (!id(sd_reader)->has_credentials()) {
+              id(setup_mode) = true;
+              id(wifi_comp)->enable();
+              id(epd)->set_full_update_every(1);
+              id(epd)->update();
+            }
+            // set Ruuvi MAC (only if enabled)
+            if (id(ruuvi_on)) {
+              auto mac_str = id(sd_reader)->get_sensor_mac();
+              if (!mac_str.empty()) {
+                unsigned int v[6];
+                if (sscanf(mac_str.c_str(), "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6) {
+                  uint64_t mac = 0;
+                  for (int i = 0; i < 6; i++) mac = (mac << 8) | v[i];
+                  id(ruuvi_tag)->set_address(mac);
+                  ESP_LOGI("main", "Ruuvi MAC set from config.txt: %s", mac_str.c_str());
+                } else {
+                  ESP_LOGW("main", "Invalid config.txt mac format: '%s'", mac_str.c_str());
+                }
+              }
+            }
+    - priority: 100
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(setup_mode);'
+            then:
+              - script.execute: wake_cycle
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 8MB
+  flash_mode: dio
+  flash_frequency: 40MHz
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  baud_rate: 115200
+  hardware_uart: UART0
+
+external_components:
+  - source: github://ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2
+  - source:
+      type: local
+      path: components
+
+switch:
+  - platform: gpio
+    pin: 7
+    id: epd_power
+    restore_mode: ALWAYS_ON
+    internal: true
+
+globals:
+  - id: online
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: temperature
+    type: float
+    restore_value: no
+    initial_value: '75.0'
+  - id: last_ruuvi_millis
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: wifi_on
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  - id: temp_c
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: press_hpa
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: weather_wifi
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  - id: ruuvi_on
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: time_fmt
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: setup_mode
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: reset_confirm
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: setup_connecting
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: setup_failed
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: full_refresh
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: update_min
+    type: int
+    restore_value: no
+    initial_value: '60'
+  - id: initial_scan_done
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: wake_count
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  - id: do_hourly
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: force_update
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: loading
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: last_epoch
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  - id: last_rtc_s
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  - id: settings_mode
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: settings_sel
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: wifi_temp
+    type: float
+    restore_value: yes
+    initial_value: '0'
+  - id: wifi_hum
+    type: float
+    restore_value: yes
+    initial_value: '0'
+  - id: wifi_press
+    type: float
+    restore_value: yes
+    initial_value: '0'
+  - id: wifi_wind
+    type: float
+    restore_value: yes
+    initial_value: '0'
+  - id: wifi_wind_dir
+    type: float
+    restore_value: yes
+    initial_value: '0'
+  - id: obs_got_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: used_fallback
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: splash_mode
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: wifi_code
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: wifi_weather_valid
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: last_wifi_millis
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: last_wx_month
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: last_wx_day
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: last_wx_hour
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: last_wx_minute
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: lat
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: lon
+    type: float
+    restore_value: no
+    initial_value: '0'
+  - id: geocoded_zip
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: daily_max
+    type: float[7]
+    restore_value: yes
+  - id: daily_min
+    type: float[7]
+    restore_value: yes
+  - id: daily_code
+    type: int[7]
+    restore_value: yes
+  - id: daily_precip
+    type: int[7]
+    restore_value: yes
+  - id: wifi_rssi
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+wifi:
+  id: wifi_comp
+  enable_on_boot: false
+  networks:
+    - ssid: "placeholder"
+      password: "placeholder"
+  ap:
+    ssid: "WeatherPaper-Setup"
+    ap_timeout: 10s
+  on_connect:
+    - globals.set:
+        id: online
+        value: 'true'
+    - lambda: 'esp_sntp_restart();'
+  on_disconnect:
+    - globals.set:
+        id: online
+        value: 'false'
+
+captive_portal:
+
+time:
+  - platform: sntp
+    id: my_time
+    timezone: America/Chicago
+    servers:
+      - pool.ntp.org
+      - time.nist.gov
+    on_time_sync:
+      - lambda: |-
+          ESP_LOGI("main", "NTP time synced");
+          id(last_epoch) = (uint32_t) id(my_time).now().timestamp;
+          id(last_rtc_s) = (uint32_t) (esp_rtc_get_time_us() / 1000000ULL);
+
+http_request:
+  timeout: 15s
+  verify_ssl: false
+  useragent: "weather-paper (sharby@localhost)"
+
+deep_sleep:
+  id: deep_sleep_1
+  sleep_duration: 60s
+  esp32_ext1_wakeup:
+    pins:
+      - number: 2
+        allow_other_uses: true
+      - number: 5
+        allow_other_uses: true
+    mode: ANY_LOW
+
+sd_wifi_reader:
+  id: sd_reader
+
+interval:
+  - interval: 3s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(setup_mode) && esphome::captive_portal::global_captive_portal != nullptr && esphome::captive_portal::global_captive_portal->has_config();'
+          then:
+            - lambda: |-
+                auto *cp = esphome::captive_portal::global_captive_portal;
+                id(sd_reader)->save_wifi_creds(cp->get_ssid(), cp->get_psk(), cp->get_zip());
+                id(setup_mode) = false;
+                id(setup_connecting) = true;
+                ESP_LOGI("main", "Setup submit: ssid=%s zip=%s", cp->get_ssid().c_str(), cp->get_zip().c_str());
+            - script.execute: setup_connect
+
+esp32_ble_tracker:
+  id: ble_tracker
+  scan_parameters:
+    active: false
+    interval: 1100ms
+    window: 110ms
+    continuous: false
+    duration: 10s
+
+sensor:
+  - platform: ruuvitag
+    id: ruuvi_tag
+    mac_address: "DE:31:C3:1E:52:31"
+    temperature:
+      id: ruuvi_temp
+      on_value:
+        - lambda: 'id(last_ruuvi_millis) = millis();'
+    humidity:
+      id: ruuvi_hum
+    pressure:
+      id: ruuvi_press
+    battery_voltage:
+      id: ruuvi_batt
+    movement_counter:
+      id: ruuvi_move
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: 2
+      inverted: true
+      allow_other_uses: true
+      mode:
+        input: true
+        pullup: true
+    id: menu_btn
+    on_press:
+      - lambda: 'id(settings_mode) = true; id(epd)->set_full_update_every(1); id(epd).update();'
+  - platform: gpio
+    pin:
+      number: 1
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    id: exit_btn
+    on_press:
+      - if:
+          condition:
+            lambda: 'return id(reset_confirm);'
+          then:
+            - lambda: 'id(reset_confirm) = false; id(epd).update();'
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(settings_mode);'
+                then:
+                  - lambda: 'id(settings_mode) = false; id(epd).update();'
+                  - delay: 3s
+                  - deep_sleep.enter:
+                      id: deep_sleep_1
+                      sleep_duration: 60s
+  - platform: gpio
+    pin:
+      number: 5
+      inverted: true
+      allow_other_uses: true
+      mode:
+        input: true
+        pullup: true
+    id: rotary_press
+    on_press:
+      - lambda: |-
+          if (id(reset_confirm)) {
+            id(sd_reader)->factory_reset();
+            ESP_LOGI("main", "Factory reset done, rebooting");
+            esp_restart();
+          } else if (id(settings_mode)) {
+            if (id(settings_sel) == 8) {
+              id(reset_confirm) = true;
+            } else {
+              if (id(settings_sel) == 0) {
+                id(wifi_on) = !id(wifi_on);
+                if (id(wifi_on)) id(wifi_comp)->enable(); else id(wifi_comp)->disable();
+              } else if (id(settings_sel) == 1) {
+                id(weather_wifi) = !id(weather_wifi);
+              } else if (id(settings_sel) == 2) {
+                id(ruuvi_on) = !id(ruuvi_on);
+              } else if (id(settings_sel) == 3) {
+                id(temp_c) = !id(temp_c);
+              } else if (id(settings_sel) == 4) {
+                id(press_hpa) = !id(press_hpa);
+              } else if (id(settings_sel) == 5) {
+                id(time_fmt) = (id(time_fmt) + 1) % 3;
+              } else if (id(settings_sel) == 6) {
+                id(full_refresh) = !id(full_refresh);
+                id(epd)->set_full_update_every(id(full_refresh) ? 1 : 60);
+              } else {
+                id(update_min) = (id(update_min) == 60) ? 30 : 60;
+              }
+              id(sd_reader)->save_config(id(wifi_on), id(temp_c), id(press_hpa), id(weather_wifi),
+                                         id(full_refresh), id(update_min), id(ruuvi_on), id(time_fmt));
+            }
+            id(epd).update();
+          } else if (!id(setup_mode) && !id(setup_connecting) && !id(do_hourly)) {
+            // main display mode: single push forces a WiFi weather/time update now
+            id(force_update) = true;
+            id(loading) = true;
+            id(wake_cycle)->execute();
+            ESP_LOGI("main", "Push: force weather update");
+          }
+  - platform: gpio
+    pin:
+      number: 6
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    id: rotary_up
+    on_press:
+      - lambda: 'if (id(settings_mode)) { id(settings_sel) = (id(settings_sel) + 8) % 9; id(epd).update(); }'
+  - platform: gpio
+    pin:
+      number: 4
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    id: rotary_down
+    on_press:
+      - lambda: 'if (id(settings_mode)) { id(settings_sel) = (id(settings_sel) + 1) % 9; id(epd).update(); }'
+
+script:
+  - id: setup_connect
+    mode: restart
+    then:
+      - lambda: 'id(epd)->set_full_update_every(1); id(epd)->update();'
+      - delay: 15s
+      - if:
+          condition:
+            lambda: 'return id(online);'
+          then:
+            - deep_sleep.enter:
+                id: deep_sleep_1
+                sleep_duration: 60s
+          else:
+            - lambda: |-
+                id(setup_connecting) = false;
+                id(setup_mode) = true;
+                id(setup_failed) = true;
+                id(epd)->update();
+                ESP_LOGW("main", "Setup: WiFi connect failed (bad SSID or passphrase)");
+  - id: wake_cycle
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: 'return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED;'
+          then:
+            # power-on: draw logo splash, then sleep so it stays on screen
+            # until the next full-refresh wake cleans the panel (no ghosting)
+            - lambda: |-
+                id(splash_mode) = true;
+                id(epd)->update();
+                id(splash_mode) = false;
+            - delay: 3s
+            - lambda: 'ESP_LOGI("main", "splash sleep");'
+            - deep_sleep.enter:
+                id: deep_sleep_1
+                sleep_duration: 60s
+      - lambda: |-
+          // restore wall-clock from persisted epoch + RTC elapsed (survives deep sleep)
+          if (id(last_epoch) > 0) {
+            uint32_t rtc_now = (uint32_t) (esp_rtc_get_time_us() / 1000000ULL);
+            int32_t elapsed = (int32_t) (rtc_now - id(last_rtc_s));
+            if (elapsed >= 0) {
+              struct timeval tv;
+              tv.tv_sec = (time_t) (id(last_epoch) + (uint32_t) elapsed);
+              tv.tv_usec = 0;
+              settimeofday(&tv, nullptr);
+            }
+          }
+          // button wake (EXT1) -> distinguish MENU (settings) vs center-push (weather update)
+          if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
+            uint64_t status = esp_sleep_get_ext1_wakeup_status();
+            if (status & (1ULL << 2)) {
+              // MENU button -> open settings and stay awake
+              id(settings_mode) = true;
+              id(epd)->set_full_update_every(1);
+              ESP_LOGI("main", "Wake -> SETTINGS (menu)");
+            } else {
+              // center push -> force a WiFi weather/time update
+              id(do_hourly) = true;
+              id(loading) = true;
+              ESP_LOGI("main", "Wake -> FORCE UPDATE (center push)");
+            }
+          } else {
+            id(wake_count) = id(wake_count) + 1;
+            bool first = !id(my_time).now().is_valid();
+            bool hourly = first || id(wake_count) >= (uint32_t) id(update_min) || id(force_update);
+            if (id(force_update)) id(force_update) = false;
+            uint32_t wc = id(wake_count);
+            if (hourly) id(wake_count) = 0;
+            id(do_hourly) = hourly;
+            auto wt = id(my_time).now();
+            ESP_LOGI("main", "Wake #%u %s time_valid=%d %02d:%02d",
+                     wc, hourly ? "HOURLY" : "minute", (int) wt.is_valid(), wt.hour, wt.minute);
+          }
+      - if:
+          condition:
+            lambda: 'return id(settings_mode);'
+          then:
+            # settings: render + stay awake (no sleep)
+            - component.update: epd
+            - delay: 3s
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(do_hourly);'
+                then:
+                  - if:
+                      condition:
+                        lambda: 'return id(loading);'
+                      then:
+                        - lambda: 'id(epd)->force_full_update();'
+                        - component.update: epd
+                  - lambda: |-
+                      // hourly wake: enable WiFi (NTP); BLE scan only if Ruuvi on
+                      if (id(wifi_on) && id(sd_reader)->has_credentials())
+                        id(wifi_comp)->enable();
+                  - delay: 3s
+                  - if:
+                      condition:
+                        lambda: 'return id(ruuvi_on);'
+                      then:
+                        - lambda: |-
+                            id(ble_tracker)->set_scan_continuous(false);
+                            id(ble_tracker)->start_scan();
+                  - delay: 20s
+                  - if:
+                      condition:
+                        lambda: 'return id(weather_wifi);'
+                      then:
+                        # geocode zip -> lat/lon once (per zip change)
+                        - if:
+                            condition:
+                              lambda: 'return (id(lat) == 0.0f || id(lon) == 0.0f) || id(geocoded_zip) != atoi(id(sd_reader)->get_zip().c_str());'
+                            then:
+                              - http_request.get:
+                                  url: !lambda 'return str_sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json", id(sd_reader)->get_zip().c_str());'
+                                  capture_response: true
+                                  max_response_buffer_size: 16kB
+                                  on_response:
+                                    then:
+                                      - lambda: |-
+                                          if (response->status_code == 200) {
+                                            json::parse_json(body, [&](JsonObject root) -> bool {
+                                              auto res = root["results"][0];
+                                              float la = res["latitude"].as<float>();
+                                              float lo = res["longitude"].as<float>();
+                                              if (la != 0.0f && lo != 0.0f) {
+                                                id(lat) = la;
+                                                id(lon) = lo;
+                                                id(geocoded_zip) = atoi(id(sd_reader)->get_zip().c_str());
+                                                id(sd_reader)->save_lat_lon(la, lo);
+                                                id(sd_reader)->clear_nws_cache();
+                                                ESP_LOGI("main", "Geocoded %s -> %.4f, %.4f", id(sd_reader)->get_zip().c_str(), la, lo);
+                                              }
+                                              return true;
+                                            });
+                                          } else {
+                                            ESP_LOGW("main", "Geocode HTTP %d", response->status_code);
+                                          }
+                                  on_error:
+                                    then:
+                                      - lambda: 'ESP_LOGW("main", "Geocode request failed");'
+                        # NWS points lookup -> gridpoint (once per zip change)
+                        - if:
+                            condition:
+                              lambda: 'return id(lat) != 0.0f && id(lon) != 0.0f && id(sd_reader)->get_nws_wfo().empty();'
+                            then:
+                              - http_request.get:
+                                  url: !lambda 'return str_sprintf("https://api.weather.gov/points/%.4f,%.4f", id(lat), id(lon));'
+                                  capture_response: true
+                                  max_response_buffer_size: 16kB
+                                  on_response:
+                                    then:
+                                      - lambda: |-
+                                          if (response->status_code == 200) {
+                                            json::parse_json(body, [&](JsonObject root) -> bool {
+                                              const char *gid = root["properties"]["gridId"].as<const char*>();
+                                              int gx = root["properties"]["gridX"].as<int>();
+                                              int gy = root["properties"]["gridY"].as<int>();
+                                              if (gid && strlen(gid) > 0 && gx > 0 && gy > 0) {
+                                                id(sd_reader)->save_nws_grid(std::string(gid), gx, gy);
+                                                ESP_LOGI("main", "NWS grid: %s/%d,%d", gid, gx, gy);
+                                              }
+                                              return true;
+                                            });
+                                          } else {
+                                            ESP_LOGW("main", "NWS points HTTP %d", response->status_code);
+                                          }
+                                  on_error:
+                                    then:
+                                      - lambda: 'ESP_LOGW("main", "NWS points request failed");'
+                        # NWS stations lookup -> nearest + fallback (once per zip change)
+                        - if:
+                            condition:
+                              lambda: 'return !id(sd_reader)->get_nws_wfo().empty() && (id(sd_reader)->get_nws_station().empty() || id(sd_reader)->get_nws_station2().empty());'
+                            then:
+                              - http_request.get:
+                                  url: !lambda 'return str_sprintf("https://api.weather.gov/gridpoints/%s/%d,%d/stations?limit=2", id(sd_reader)->get_nws_wfo().c_str(), id(sd_reader)->get_nws_x(), id(sd_reader)->get_nws_y());'
+                                  capture_response: true
+                                  max_response_buffer_size: 16kB
+                                  on_response:
+                                    then:
+                                      - lambda: |-
+                                          if (response->status_code == 200) {
+                                            json::parse_json(body, [&](JsonObject root) -> bool {
+                                              auto feats = root["features"].as<JsonArray>();
+                                              if (feats.size() >= 1) {
+                                                const char *sid = feats[0]["properties"]["stationIdentifier"].as<const char*>();
+                                                if (sid && strlen(sid) > 0) {
+                                                  id(sd_reader)->save_nws_station(std::string(sid));
+                                                  ESP_LOGI("main", "NWS station: %s", sid);
+                                                }
+                                              }
+                                              if (feats.size() >= 2) {
+                                                const char *sid2 = feats[1]["properties"]["stationIdentifier"].as<const char*>();
+                                                if (sid2 && strlen(sid2) > 0) {
+                                                  id(sd_reader)->save_nws_station2(std::string(sid2));
+                                                  ESP_LOGI("main", "NWS station2: %s", sid2);
+                                                }
+                                              }
+                                              return true;
+                                            });
+                                          } else {
+                                            ESP_LOGW("main", "NWS stations HTTP %d", response->status_code);
+                                          }
+                                  on_error:
+                                    then:
+                                      - lambda: 'ESP_LOGW("main", "NWS stations request failed");'
+                        # NWS 7-day forecast
+                        - if:
+                            condition:
+                              lambda: 'return !id(sd_reader)->get_nws_wfo().empty();'
+                            then:
+                              - http_request.get:
+                                  url: !lambda 'return str_sprintf("https://api.weather.gov/gridpoints/%s/%d,%d/forecast", id(sd_reader)->get_nws_wfo().c_str(), id(sd_reader)->get_nws_x(), id(sd_reader)->get_nws_y());'
+                                  capture_response: true
+                                  max_response_buffer_size: 16kB
+                                  on_response:
+                                    then:
+                                      - lambda: |-
+                                          if (response->status_code == 200) {
+                                            json::parse_json(body, [&](JsonObject root) -> bool {
+                                              JsonArray periods = root["properties"]["periods"].as<JsonArray>();
+                                              if (periods.size() >= 2) {
+                                                auto now = id(my_time).now();
+                                                char today_str[11];
+                                                snprintf(today_str, sizeof(today_str), "%04d-%02d-%02d", now.year, now.month, now.day_of_month);
+                                                char prev_date[11] = "";
+                                                int slot = -1;
+                                                for (size_t i = 0; i < periods.size(); i++) {
+                                                  const char *vt = periods[i]["startTime"].as<const char*>();
+                                                  if (!vt || strncmp(vt, today_str, 10) < 0)
+                                                    continue;  // skip before today
+                                                  if (strncmp(vt, prev_date, 10) != 0) {
+                                                    strncpy(prev_date, vt, 10);
+                                                    prev_date[10] = 0;
+                                                    slot++;
+                                                    if (slot >= 7)
+                                                      break;
+                                                  }
+                                                  int tf = periods[i]["temperature"].as<int>();
+                                                  float tc = (tf - 32.0f) * 5.0f / 9.0f;
+                                                  if (periods[i]["isDaytime"].as<bool>()) {
+                                                    id(daily_max)[slot] = tc;
+                                                    id(daily_code)[slot] = nws_code_from_text(periods[i]["shortForecast"].as<const char*>());
+                                                    id(daily_precip)[slot] = periods[i]["probabilityOfPrecipitation"]["value"].as<int>();
+                                                  } else {
+                                                    id(daily_min)[slot] = tc;
+                                                  }
+                                                }
+                                                for (int k = 1; k < 7; k++)
+                                                  if (id(daily_min)[k] == 0.0f)
+                                                    id(daily_min)[k] = id(daily_min)[k - 1];
+                                                ESP_LOGI("main", "NWS forecast: today + %d days (today %s)", slot, today_str);
+                                              }
+                                              return true;
+                                            });
+                                          } else {
+                                            ESP_LOGW("main", "NWS forecast HTTP %d", response->status_code);
+                                          }
+                                  on_error:
+                                    then:
+                                      - lambda: 'ESP_LOGW("main", "NWS forecast request failed");'
+                        # NWS current observation (nearest station)
+                        - if:
+                            condition:
+                              lambda: 'return !id(sd_reader)->get_nws_station().empty();'
+                            then:
+                              - lambda: 'id(obs_got_valid) = false;'
+                              - http_request.get:
+                                  url: !lambda 'return str_sprintf("https://api.weather.gov/stations/%s/observations/latest", id(sd_reader)->get_nws_station().c_str());'
+                                  capture_response: true
+                                  max_response_buffer_size: 16kB
+                                  on_response:
+                                    then:
+                                      - lambda: |-
+                                          if (response->status_code == 200) {
+                                            json::parse_json(body, [&](JsonObject root) -> bool {
+                                              float t = root["properties"]["temperature"]["value"].as<float>();
+                                              float h = root["properties"]["relativeHumidity"]["value"].as<float>();
+                                              float ppa = root["properties"]["barometricPressure"]["value"].as<float>();
+                                              float ws = root["properties"]["windSpeed"]["value"].as<float>();
+                                              float wd = root["properties"]["windDirection"]["value"].as<float>();
+                                              const char *td = root["properties"]["textDescription"].as<const char*>();
+                                              if (t > -60.0f && t < 60.0f && h >= 0.0f && h <= 100.0f && ppa > 50000.0f && ppa < 120000.0f) {
+                                                id(wifi_temp) = t;
+                                                id(wifi_hum) = h;
+                                                id(wifi_press) = ppa / 100.0f;
+                                                id(wifi_wind) = ws;
+                                                id(wifi_wind_dir) = wd;
+                                                id(wifi_code) = nws_code_from_text(td);
+                                                id(wifi_weather_valid) = true;
+                                                id(obs_got_valid) = true;
+                                                id(used_fallback) = false;
+                                                id(last_wifi_millis) = millis();
+                                                auto wt = id(my_time).now();
+                                                id(last_wx_month) = wt.month;
+                                                id(last_wx_day) = wt.day_of_month;
+                                                id(last_wx_hour) = wt.hour;
+                                                id(last_wx_minute) = wt.minute;
+                                                ESP_LOGI("main", "NWS obs: %.1fC %.0f%% %.1fhPa '%s' code=%d", t, h, ppa / 100.0f, td ? td : "?", id(wifi_code));
+                                              }
+                                              return true;
+                                            });
+                                          } else {
+                                            ESP_LOGW("main", "NWS obs HTTP %d", response->status_code);
+                                          }
+                                  on_error:
+                                    then:
+                                      - lambda: 'ESP_LOGW("main", "NWS obs request failed");'
+                        # NWS fallback observation (if primary station returned no data)
+                        - if:
+                            condition:
+                              lambda: 'return !id(obs_got_valid) && !id(sd_reader)->get_nws_station2().empty();'
+                            then:
+                              - http_request.get:
+                                  url: !lambda 'return str_sprintf("https://api.weather.gov/stations/%s/observations/latest", id(sd_reader)->get_nws_station2().c_str());'
+                                  capture_response: true
+                                  max_response_buffer_size: 16kB
+                                  on_response:
+                                    then:
+                                      - lambda: |-
+                                          if (response->status_code == 200) {
+                                            json::parse_json(body, [&](JsonObject root) -> bool {
+                                              float t = root["properties"]["temperature"]["value"].as<float>();
+                                              float h = root["properties"]["relativeHumidity"]["value"].as<float>();
+                                              float ppa = root["properties"]["barometricPressure"]["value"].as<float>();
+                                              float ws = root["properties"]["windSpeed"]["value"].as<float>();
+                                              float wd = root["properties"]["windDirection"]["value"].as<float>();
+                                              const char *td = root["properties"]["textDescription"].as<const char*>();
+                                              if (t > -60.0f && t < 60.0f && h >= 0.0f && h <= 100.0f && ppa > 50000.0f && ppa < 120000.0f) {
+                                                id(wifi_temp) = t;
+                                                id(wifi_hum) = h;
+                                                id(wifi_press) = ppa / 100.0f;
+                                                id(wifi_wind) = ws;
+                                                id(wifi_wind_dir) = wd;
+                                                id(wifi_code) = nws_code_from_text(td);
+                                                id(wifi_weather_valid) = true;
+                                                id(obs_got_valid) = true;
+                                                id(used_fallback) = true;
+                                                id(last_wifi_millis) = millis();
+                                                auto wt = id(my_time).now();
+                                                id(last_wx_month) = wt.month;
+                                                id(last_wx_day) = wt.day_of_month;
+                                                id(last_wx_hour) = wt.hour;
+                                                id(last_wx_minute) = wt.minute;
+                                                ESP_LOGI("main", "NWS obs (fb %s): %.1fC %.0f%% %.1fhPa '%s'", id(sd_reader)->get_nws_station2().c_str(), t, h, ppa / 100.0f, td ? td : "?");
+                                              }
+                                              return true;
+                                            });
+                                          } else {
+                                            ESP_LOGW("main", "NWS obs2 HTTP %d", response->status_code);
+                                          }
+                                  on_error:
+                                    then:
+                                      - lambda: 'ESP_LOGW("main", "NWS obs2 request failed");'
+                  - lambda: |-
+                      int8_t rssi = id(wifi_comp)->wifi_rssi();
+                      if (rssi < 0 && rssi > -100)
+                        id(wifi_rssi) = rssi;
+                  - lambda: |-
+                      if (!isnan(id(ruuvi_temp).state))
+                        id(sd_reader)->save_state(id(ruuvi_temp).state, id(ruuvi_hum).state,
+                                                  id(ruuvi_press).state, id(ruuvi_batt).state,
+                                                  (int) id(ruuvi_move).state);
+                  - lambda: |-
+                      float ph = isnan(id(ruuvi_press).state) ? id(sd_reader)->get_last_press()
+                                                              : id(ruuvi_press).state;
+                      if (ph > 500.0f && ph < 1200.0f)
+                        id(sd_reader)->save_pressure_sample(ph);
+                  - lambda: 'id(loading) = false; id(epd)->force_full_update();'
+                  - component.update: epd
+                  - delay: 3s
+                else:
+                  - component.update: epd
+                  - delay: 3s
+            - if:
+                condition:
+                  lambda: 'return !id(settings_mode);'
+                then:
+                  - lambda: 'ESP_LOGI("main", "sleeping");'
+                  - deep_sleep.enter:
+                      id: deep_sleep_1
+                      sleep_duration: 60s
+
+font:
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: clock_font
+    size: 90
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: clock_ampm
+    size: 80
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: day_font
+    size: 22
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: month_font
+    size: 18
+  - file: "fonts/DejaVuSans.ttf"
+    id: small
+    size: 14
+  - file: "fonts/DejaVuSans.ttf"
+    id: wx_time
+    size: 12
+  - file: "fonts/weathericons.ttf"
+    id: wicon
+    size: 90
+    glyphs: ["\uF00D\uF002\uF013\uF041\uF019\uF01A\uF01E\uF014\uF085\uF0B2"]
+  - file: "fonts/weathericons.ttf"
+    id: wicon_big
+    size: 145
+    glyphs: ["\uF00D\uF002\uF013\uF041\uF019\uF01A\uF01E\uF014\uF085\uF0B2"]
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: temp
+    size: 116
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: temp_lg
+    size: 132
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: temp_sm
+    size: 88
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: unit
+    size: 42
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: temp_big
+    size: 150
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: temp_med
+    size: 118
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: unit_big
+    size: 44
+  - file: "fonts/DejaVuSans.ttf"
+    id: meas
+    size: 16
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: label
+    size: 13
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: wind_card
+    size: 16
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: mph_font
+    size: 30
+  - file: "fonts/DejaVuSans.ttf"
+    id: graph
+    size: 9
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: cal_h
+    size: 11
+  - file: "fonts/DejaVuSans.ttf"
+    id: cal_num
+    size: 8
+  - file: "fonts/mdi.ttf"
+    id: src_icon
+    size: 28
+    glyphs: ["\U000F05A9\U000F00AF"]
+  - file: "fonts/mdi.ttf"
+    id: src_icon_small
+    size: 18
+    glyphs: ["\U000F05A9\U000F00AF"]
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: title_font
+    size: 36
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: setting_font
+    size: 20
+    glyphsets:
+      - "GF_Latin_Kernel"
+    glyphs: ["\u25B6"]
+  - file: "fonts/weathericons.ttf"
+    id: wicon_small
+    size: 48
+    glyphs: ["\uF00D\uF002\uF013\uF041\uF019\uF01A\uF01E\uF014\uF085\uF0B2"]
+  - file: "fonts/weathericons.ttf"
+    id: wicon_small2
+    size: 40
+    glyphs: ["\uF00D\uF002\uF013\uF041\uF019\uF01A\uF01E\uF014\uF085\uF0B2"]
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: fday
+    size: 12
+  - file: "fonts/DejaVuSans-Bold.ttf"
+    id: fhi
+    size: 14
+  - file: "fonts/DejaVuSans.ttf"
+    id: flo
+    size: 11
+
+image:
+  - file: "logo_1bit.png"
+    id: logo
+    type: BINARY
+    invert_alpha: true
+  - file: "setup_qr.png"
+    id: setup_qr
+    type: BINARY
+    invert_alpha: true
+
+display:
+  - platform: crowpanel_epaper
+    id: epd
+    model: "5.79in"
+    clk_pin: 12
+    mosi_pin: 11
+    cs_pin: 45
+    dc_pin: 46
+    reset_pin: 47
+    busy_pin: 48
+    invert_colors: false
+    full_update_every: 60
+    update_interval: never
+    lambda: |-
+      static const char *DAYS[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+      static const char *MONTHS[] = {"January","February","March","April","May","June","July","August","September","October","November","December"};
+      auto t = id(my_time).now();
+
+      if (id(splash_mode)) {
+        it.image(72, 33, id(logo));
+        return;
+      }
+
+      if (id(setup_connecting)) {
+        it.printf(396, 60, id(title_font), TextAlign::TOP_CENTER, "Connecting to WiFi");
+        it.printf(396, 130, id(setting_font), TextAlign::TOP_CENTER, "%s", id(sd_reader)->get_ssid().c_str());
+        it.printf(396, 170, id(small), TextAlign::TOP_CENTER, "Loading...");
+        it.printf(396, 200, id(small), TextAlign::TOP_CENTER, "May take a couple minutes");
+        return;
+      }
+
+      if (id(setup_mode)) {
+        it.printf(396, 18, id(title_font), TextAlign::TOP_CENTER, "WiFi SETUP");
+        if (id(setup_failed))
+          it.printf(396, 58, id(small), TextAlign::TOP_CENTER, "SSID or passphrase not correct");
+        else
+          it.printf(396, 58, id(small), TextAlign::TOP_CENTER, "1. Connect your phone to:");
+        it.printf(396, 74, id(setting_font), TextAlign::TOP_CENTER, "WeatherPaper-%s", id(sd_reader)->get_device_id().c_str());
+        it.image(330, 100, id(setup_qr));
+        it.printf(396, 238, id(small), TextAlign::TOP_CENTER, "2. Scan the QR code");
+        it.printf(396, 254, id(small), TextAlign::TOP_CENTER, "(or open a browser to 192.168.4.1)");
+        return;
+      }
+
+      if (id(reset_confirm)) {
+        it.printf(396, 60, id(title_font), TextAlign::TOP_CENTER, "Factory Reset?");
+        it.printf(396, 130, id(small), TextAlign::TOP_CENTER, "Erases WiFi, zip, and all settings.");
+        it.printf(396, 160, id(small), TextAlign::TOP_CENTER, "Push = Confirm   EXIT = Cancel");
+        return;
+      }
+
+      if (id(loading)) {
+        // "Loading Weather" screen with a random weather icon, vertically centered
+        // in the white space between the top of the screen and the "Loading Weather" text.
+        static const char *LICONS[] = {"\uF00D", "\uF041", "\uF013", "\uF019", "\uF01A", "\uF01E", "\uF014"};
+        const char *lic = LICONS[esp_random() % 7];
+        int lx1, ly1, lw, lh;
+        it.get_text_bounds(0, 0, lic, id(wicon_big), TextAlign::TOP_LEFT, &lx1, &ly1, &lw, &lh);
+        it.printf(396, 92 - (ly1 + lh / 2), id(wicon_big), TextAlign::TOP_CENTER, "%s", lic);
+        it.printf(396, 185, id(title_font), TextAlign::TOP_CENTER, "Loading Weather");
+        it.printf(396, 228, id(small), TextAlign::TOP_CENTER, "This may take ~25 seconds");
+        return;
+      }
+
+      if (id(settings_mode)) {
+        // ==================== SETTINGS SCREEN ====================
+        it.printf(396, 8, id(title_font), TextAlign::TOP_CENTER, "SETTINGS");
+        const char *slabels[9] = {"WiFi", "Weather", "Ruuvi", "Temperature", "Pressure", "Time Format", "Screen Refresh", "Update", "Factory Reset"};
+        char sval[9][16];
+        snprintf(sval[0], sizeof(sval[0]), "%s", id(wifi_on) ? "ON" : "OFF");
+        snprintf(sval[1], sizeof(sval[1]), "%s", id(weather_wifi) ? "WiFi" : "Ruuvi");
+        snprintf(sval[2], sizeof(sval[2]), "%s", id(ruuvi_on) ? "ON" : "OFF");
+        snprintf(sval[3], sizeof(sval[3]), "%s", id(temp_c) ? "\u00B0C" : "\u00B0F");
+        snprintf(sval[4], sizeof(sval[4]), "%s", id(press_hpa) ? "hPa" : "inHg");
+        snprintf(sval[5], sizeof(sval[5]), "%s", id(time_fmt) == 1 ? "AM/PM" : (id(time_fmt) == 2 ? "UTC" : "24 Hour"));
+        snprintf(sval[6], sizeof(sval[6]), "%s", id(full_refresh) ? "Full" : "Partial");
+        snprintf(sval[7], sizeof(sval[7]), "%s", id(update_min) == 60 ? "1hr" : "30min");
+        snprintf(sval[8], sizeof(sval[8]), "%s", ">");
+        for (int i = 0; i < 9; i++) {
+          int y = 50 + i * 23;
+          if (i == id(settings_sel))
+            it.printf(56, y, id(setting_font), TextAlign::TOP_LEFT, "\u25B6");
+          it.printf(104, y, id(setting_font), TextAlign::TOP_LEFT, "%s", slabels[i]);
+          it.printf(736, y, id(setting_font), TextAlign::TOP_RIGHT, "%s", sval[i]);
+        }
+        it.printf(8, 254, id(small), TextAlign::TOP_LEFT, "ID %s", id(sd_reader)->get_device_id().c_str());
+        it.printf(396, 254, id(small), TextAlign::TOP_CENTER, "Roll: select   Push: toggle   EXIT: back");
+        it.printf(780, 254, id(small), TextAlign::TOP_RIGHT, "${version}");
+        return;
+      }
+
+      // ---- weather values: WiFi (Open-Meteo) or Ruuvi/stored ----
+      bool have_ruuvi = !isnan(id(ruuvi_temp).state);
+      bool have_last = id(sd_reader)->has_last();
+      bool use_wifi = id(weather_wifi) && id(wifi_weather_valid);
+      float tc, hum, p_hpa;
+      if (use_wifi) {
+        tc = id(wifi_temp);
+        hum = id(wifi_hum);
+        p_hpa = id(wifi_press);
+      } else {
+        tc = have_ruuvi ? id(ruuvi_temp).state : (have_last ? id(sd_reader)->get_last_temp() : 23.9f);
+        hum = have_ruuvi ? id(ruuvi_hum).state : (have_last ? id(sd_reader)->get_last_hum() : 42.0f);
+        p_hpa = have_ruuvi ? id(ruuvi_press).state : (have_last ? id(sd_reader)->get_last_press() : 1015.0f);
+      }
+      float tf = tc * 9.0f / 5.0f + 32.0f;
+      float p_inhg = p_hpa * 0.02953f;
+      float batt = have_ruuvi ? id(ruuvi_batt).state : (have_last ? id(sd_reader)->get_last_batt() : 2.94f);
+      int move = have_ruuvi ? (int) id(ruuvi_move).state : (have_last ? id(sd_reader)->get_last_move() : 137);
+      float g = logf(hum / 100.0f) + (17.27f * tc) / (237.7f + tc);
+      float dp_c = 237.7f * g / (17.27f - g);
+      float dp_f = dp_c * 9.0f / 5.0f + 32.0f;
+      float wind_mph = id(wifi_wind) * 0.621371f;
+      float feel_f;
+      if (tf <= 50.0f && wind_mph > 3.0f)
+        feel_f = wind_chill_f(tf, wind_mph);
+      else if (tf > 80.0f)
+        feel_f = heat_index_f(tf, hum);
+      else
+        feel_f = tf;
+      uint32_t upd_s = (id(last_ruuvi_millis) == 0) ? 0 : (millis() - id(last_ruuvi_millis)) / 1000;
+      uint32_t wifi_upd_s = (id(last_wifi_millis) == 0) ? 0 : (millis() - id(last_wifi_millis)) / 1000;
+
+      // unit-aware display values
+      bool use_c = id(temp_c);
+      bool use_hpa = id(press_hpa);
+      float tdisp = use_c ? tc : tf;
+      float dp_disp = use_c ? dp_c : dp_f;
+      float tmp_lo = use_c ? -40.0f : -40.0f, tmp_hi = use_c ? 49.0f : 120.0f;
+      float dp_lo = use_c ? -29.0f : -20.0f, dp_hi = use_c ? 38.0f : 100.0f;
+      float feel_disp = use_c ? (feel_f - 32.0f) * 5.0f / 9.0f : feel_f;
+      float feel_lo = use_c ? -57.0f : -70.0f, feel_hi = use_c ? 57.0f : 135.0f;
+      float pdisp = use_hpa ? p_hpa : p_inhg;
+      float prs_lo = use_hpa ? 948.0f : 28.0f, prs_hi = use_hpa ? 1084.0f : 32.0f;
+      const char *tunit = use_c ? "\u00B0C" : "\u00B0F";
+
+      // weather icon: WMO code (WiFi) or pressure trend (Ruuvi)
+      const float *phist = id(sd_reader)->get_press_hist();
+      uint16_t phc = id(sd_reader)->get_press_hist_count();
+      auto wmo_glyph = [](int wc) -> const char * {
+        if (wc == 0) return "\uF00D";                     // clear
+        if (wc == 1 || wc == 2) return "\uF041";          // partly cloudy
+        if (wc == 3) return "\uF013";                     // overcast
+        if (wc == 45 || wc == 48) return "\uF014";        // fog
+        if (wc >= 51 && wc <= 67) return "\uF019";        // rain
+        if (wc >= 71 && wc <= 77) return "\uF01A";        // snow
+        if (wc >= 80 && wc <= 82) return "\uF019";        // rain showers
+        if (wc >= 95 && wc <= 99) return "\uF01E";        // thunderstorm
+        return "\uF013";                                  // cloudy default
+      };
+      const char *wicon_glyph = "\uF013";  // cloudy default
+      if (use_wifi) {
+        wicon_glyph = wmo_glyph(id(wifi_code));
+      } else {
+        float p_old = p_hpa;
+        if (phc >= 3) p_old = phist[phc - 3];
+        else if (phc >= 1) p_old = phist[0];
+        float dpr = p_hpa - p_old;
+        if (dpr > 2.0f) wicon_glyph = "\uF00D";        // sunny
+        else if (dpr > 1.0f) wicon_glyph = "\uF041";   // partly cloudy
+        else if (dpr < -2.0f) wicon_glyph = "\uF01E";  // storm
+        else if (dpr < -1.0f) wicon_glyph = "\uF019";  // rain
+        if (hum >= 85.0f && dpr < 0.0f) wicon_glyph = "\uF019";  // humid + falling → rain
+      }
+
+      // weather-source icon glyph (WiFi U+F05A9 or Bluetooth U+F00AF)
+      const char *src_glyph = id(weather_wifi) ? "\U000F05A9" : "\U000F00AF";
+
+      if (true) {
+        // ==================== ONLINE LAYOUT (always) ====================
+        it.line(0, 88, 792, 88);
+
+        if (t.is_valid()) {
+          int ch = t.hour, cm = t.minute;
+          bool is_pm = false;
+          if (id(time_fmt) == 2) {
+            time_t uts = t.timestamp;
+            struct tm *ut = gmtime(&uts);
+            if (ut) { ch = ut->tm_hour; cm = ut->tm_min; }
+          } else if (id(time_fmt) == 1) {
+            is_pm = ch >= 12;
+            ch = ch % 12;
+            if (ch == 0) ch = 12;
+          }
+          auto *cfont = (id(time_fmt) == 1) ? id(clock_ampm) : id(clock_font);
+          char cbuf[16];
+          snprintf(cbuf, sizeof(cbuf), "%d:%02d", ch, cm);
+          it.printf(16, -7, cfont, TextAlign::TOP_LEFT, cbuf);
+          if (id(time_fmt) == 1) {
+            int ax1, ay1, aw, ah;
+            it.get_text_bounds(0, 0, cbuf, cfont, TextAlign::TOP_LEFT, &ax1, &ay1, &aw, &ah);
+            int apx = 16 + aw + 8;
+            it.printf(apx, 14, id(setting_font), TextAlign::TOP_LEFT, is_pm ? "P" : "A");
+            it.printf(apx, 40, id(setting_font), TextAlign::TOP_LEFT, "M");
+          }
+
+          it.printf(580, 14, id(day_font), TextAlign::TOP_CENTER, DAYS[t.day_of_week - 1]);
+          char dbuf[24];
+          snprintf(dbuf, sizeof(dbuf), "%s %d", MONTHS[t.month - 1], t.day_of_month);
+          it.printf(580, 48, id(month_font), TextAlign::TOP_CENTER, dbuf);
+
+          // calendar (dynamic)
+          int dow0 = t.day_of_week - 1;
+          int first_dow0 = (dow0 - (t.day_of_month - 1) % 7 + 7) % 7;
+          static const int DIM[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
+          int dim = DIM[t.month];
+          if (t.month == 2 && ((t.year % 4 == 0 && t.year % 100 != 0) || t.year % 400 == 0)) dim = 29;
+          int weeks = (first_dow0 + dim + 6) / 7;
+          int cal_x0 = 314, cal_x1 = 496, cal_y0 = 6, cal_y1 = 86;
+          int cw = (cal_x1 - cal_x0) / 7;
+          int rh = (cal_y1 - cal_y0) / (weeks + 1);
+          const char *hd = "SMTWTFS";
+          int hx = cal_x0 + cw / 2;
+          for (int i = 0; i < 7; i++)
+            it.printf(hx + i * cw, cal_y0 - 1, id(cal_h), TextAlign::TOP_CENTER, "%c", hd[i]);
+          for (int w = 0; w < weeks; w++) {
+            for (int c = 0; c < 7; c++) {
+              int day = w * 7 + c - first_dow0 + 1;
+              if (day < 1 || day > dim) continue;
+              int x0 = cal_x0 + c * cw;
+              int y0 = cal_y0 + (w + 1) * rh;
+              if (day == t.day_of_month) {
+                it.filled_rectangle(x0 + 1, y0 + 1, cw - 1, rh - 1);
+                it.printf(x0 + cw / 2, y0 + 2, id(cal_num), Color(255, 255, 255), TextAlign::TOP_CENTER, "%d", day);
+              } else {
+                it.rectangle(x0 + 1, y0 + 1, cw - 1, rh - 1);
+                it.printf(x0 + cw / 2, y0 + 2, id(cal_num), TextAlign::TOP_CENTER, "%d", day);
+              }
+            }
+          }
+        } else {
+          it.printf(16, -7, id(clock_font), TextAlign::TOP_LEFT, "--:--");
+          it.printf(580, 14, id(day_font), TextAlign::TOP_CENTER, "--");
+        }
+
+        // status stack (top-right)
+        char rssi_buf[16];
+        if (id(wifi_rssi) != 0)
+          snprintf(rssi_buf, sizeof(rssi_buf), "RSSI %ddBm", (int) id(wifi_rssi));
+        else
+          snprintf(rssi_buf, sizeof(rssi_buf), "RSSI --");
+        it.printf(772, 10, id(small), TextAlign::TOP_RIGHT, "%s", rssi_buf);
+        // weather-source icon (bottom-left of the status box)
+        it.printf(668, 66, id(src_icon_small), TextAlign::TOP_LEFT, "%s", src_glyph);
+        // zip code above the wifi icon (WiFi weather only)
+        if (id(weather_wifi)) {
+          it.printf(668, 46, id(month_font), TextAlign::TOP_LEFT, "%s", id(sd_reader)->get_zip().c_str());
+          const char *sid = id(used_fallback) ? id(sd_reader)->get_nws_station2().c_str() : id(sd_reader)->get_nws_station().c_str();
+          int sx1, sy1, sw, sh;
+          it.get_text_bounds(0, 0, sid, id(fhi), TextAlign::TOP_LEFT, &sx1, &sy1, &sw, &sh);
+          it.printf(791 - sw, 46, id(fhi), TextAlign::TOP_LEFT, "%s", sid);
+          char wxbuf[24];
+          if (id(last_wx_month) > 0)
+            snprintf(wxbuf, sizeof(wxbuf), "WX: %02d/%02d @ %02d:%02d", id(last_wx_month), id(last_wx_day), id(last_wx_hour), id(last_wx_minute));
+          else
+            snprintf(wxbuf, sizeof(wxbuf), "WX: --");
+          it.printf(668, 26, id(wx_time), TextAlign::TOP_LEFT, "%s", wxbuf);
+        }
+        if (!use_wifi) {
+          float bf = (batt - 2.0f) / (3.0f - 2.0f);
+          if (bf < 0.0f) bf = 0.0f;
+          if (bf > 1.0f) bf = 1.0f;
+          int bb_w = 44, bb_h = 13;
+          int bbx0 = 772 - 2 - bb_w;
+          int bby = 30;
+          it.rectangle(bbx0, bby, bb_w, bb_h);
+          it.rectangle(bbx0 + bb_w, bby + 3, 3, bb_h - 6);
+          int fill_w = (int)((bb_w - 4) * bf + 0.5f);
+          it.filled_rectangle(bbx0 + 2, bby + 2, fill_w, bb_h - 4);
+          char bbuf[8];
+          snprintf(bbuf, sizeof(bbuf), "%.2fV", batt);
+          it.printf(bbx0 - 6, bby, id(small), TextAlign::TOP_RIGHT, bbuf);
+        } else {
+          it.printf(772, 30, id(small), TextAlign::TOP_RIGHT, "--");
+        }
+        if (!use_wifi) {
+          char mbuf[12];
+          snprintf(mbuf, sizeof(mbuf), "Move %d", move);
+          it.printf(772, 54, id(small), TextAlign::TOP_RIGHT, mbuf);
+        } else {
+          it.printf(772, 54, id(small), TextAlign::TOP_RIGHT, "--");
+        }
+        {
+          char ubuf[16];
+          if (use_wifi) {
+            if (id(last_wifi_millis) > 0)
+              snprintf(ubuf, sizeof(ubuf), "WiFi %us", (unsigned) wifi_upd_s);
+            else
+              snprintf(ubuf, sizeof(ubuf), "WiFi");
+          } else if (have_ruuvi) {
+            snprintf(ubuf, sizeof(ubuf), "Upd %us ago", (unsigned) upd_s);
+          } else if (have_last) {
+            snprintf(ubuf, sizeof(ubuf), "Stored");
+          } else {
+            snprintf(ubuf, sizeof(ubuf), "No data");
+          }
+          it.printf(772, 70, id(small), TextAlign::TOP_RIGHT, ubuf);
+        }
+
+        // top ticks
+        it.line(308, 44, 308, 88);
+        it.line(505, 44, 505, 88);
+        it.line(664, 44, 664, 88);
+
+        // icon (centered vertically between divider and forecast line)
+        int ix1, iy1, iw, ih;
+        it.get_text_bounds(0, 0, wicon_glyph, id(wicon), TextAlign::TOP_LEFT, &ix1, &iy1, &iw, &ih);
+        it.printf(72, 151 - (iy1 + ih / 2), id(wicon), TextAlign::TOP_CENTER, "%s", wicon_glyph);
+        // precip % in the upper-left of the icon (WiFi), today's PoP (0-100%)
+        if (use_wifi) {
+          char ppbuf[8];
+          snprintf(ppbuf, sizeof(ppbuf), "%d%%", id(daily_precip)[0]);
+          it.printf(1, 88, id(fhi), TextAlign::TOP_LEFT, "%s", ppbuf);
+        }
+
+        // temperature (auto-size: 132px, or 88px for negative / 3-digit; centered vertically)
+        int tdeg = (int)(tdisp + 0.5f);
+        bool big = (tdeg >= 0 && tdeg < 100);
+        auto *tfont = big ? id(temp_lg) : id(temp_sm);
+        char tbuf[8];
+        snprintf(tbuf, sizeof(tbuf), "%d", tdeg);
+        int tx1, ty1, tw, th;
+        it.get_text_bounds(0, 0, tbuf, tfont, TextAlign::TOP_LEFT, &tx1, &ty1, &tw, &th);
+        int temp_y = 151 - (ty1 + th / 2);
+        it.printf(270 - tw / 2, temp_y, tfont, TextAlign::TOP_LEFT, tbuf);
+        it.printf(270 + tw / 2 + 4, 88, id(unit), TextAlign::TOP_LEFT, "%s", tunit);
+        int ux1, uy1, uw, uh;
+        it.get_text_bounds(0, 0, tunit, id(unit), TextAlign::TOP_LEFT, &ux1, &uy1, &uw, &uh);
+        int right_edge = 270 + tw / 2 + 4 + uw;
+
+        // Ruuvi temp reference (WiFi mode): small font, right-aligned under the
+        // °F, baseline-aligned to the big number's bottom (digits flush).
+        if (have_ruuvi && use_wifi) {
+          float rt = id(ruuvi_temp).state;
+          float rdisp = use_c ? rt : (rt * 9.0f / 5.0f + 32.0f);
+          char rbuf[8];
+          snprintf(rbuf, sizeof(rbuf), "%d%s", (int) (rdisp + 0.5f), tunit);
+          int rx1, ry1, rw, rh;
+          it.get_text_bounds(0, 0, rbuf, id(small), TextAlign::TOP_LEFT, &rx1, &ry1, &rw, &rh);
+          int bx1, by1, bw, bh;
+          it.get_text_bounds(0, 0, tbuf, tfont, TextAlign::BASELINE_LEFT, &bx1, &by1, &bw, &bh);
+          int big_baseline = temp_y - by1;  // by1 == -baseline for BASELINE_LEFT at y=0
+          it.printf(right_edge - rw, big_baseline, id(small), TextAlign::BASELINE_LEFT, "%s", rbuf);
+        }
+
+        // wind speed dial (WiFi only; before the bars)
+        int div_x = 0;
+        if (use_wifi) {
+          int wr = 38, dcy = 151;
+          int ww1, wy1, ww, wh;
+          it.get_text_bounds(0, 0, "W", id(wind_card), TextAlign::TOP_LEFT, &ww1, &wy1, &ww, &wh);
+          int w_hw = ww / 2;
+          int bar_tick_x = 540 - 7;
+          int dcx = (right_edge - wr - 10 - w_hw + 2 * bar_tick_x) / 3;
+          int W_left = dcx - wr - 10 - w_hw;
+          div_x = (right_edge + W_left) / 2;
+          it.filled_ring(dcx, dcy, wr - 1, wr);
+          auto wtick = [&](float deg, int len, int hw) {
+            float ar = deg * 3.14159265f / 180.0f;
+            float su2 = sinf(ar), cu2 = cosf(ar);
+            int tipx = dcx + (int)((wr - 2 - len) * su2);
+            int tipy = dcy - (int)((wr - 2 - len) * cu2);
+            int bcx = dcx + (int)((wr - 2) * su2);
+            int bcy = dcy - (int)((wr - 2) * cu2);
+            int blx = bcx + (int)(hw * cu2);
+            int bly = bcy + (int)(hw * su2);
+            int brx = bcx - (int)(hw * cu2);
+            int bry = bcy - (int)(hw * su2);
+            it.filled_triangle(tipx, tipy, blx, bly, brx, bry);
+          };
+          for (int a = 0; a < 36; a++) {
+            if (a % 9 == 0) continue;
+            float har = a * 3.14159265f / 18.0f;
+            float hsu = sinf(har), hcu = cosf(har);
+            it.line(dcx + (int)((wr - 2) * hsu), dcy - (int)((wr - 2) * hcu),
+                    dcx + (int)((wr - 6) * hsu), dcy - (int)((wr - 6) * hcu));
+          }
+          for (int a = 0; a < 4; a++) wtick(a * 90.0f, 9, 2);
+          it.printf(dcx, dcy - wr - 11, id(wind_card), TextAlign::CENTER, "N");
+          it.printf(dcx, dcy + wr + 11, id(wind_card), TextAlign::CENTER, "S");
+          it.printf(dcx + wr + 11, dcy, id(wind_card), TextAlign::CENTER, "E");
+          it.printf(dcx - wr - 11, dcy, id(wind_card), TextAlign::CENTER, "W");
+          float wrad = id(wifi_wind_dir) * 3.14159265f / 180.0f;
+          float su = sinf(wrad), cu = cosf(wrad);
+          int tipx = dcx + (int)((wr - 7) * su);
+          int tipy = dcy - (int)((wr - 7) * cu);
+          int basex = dcx + (int)((wr + 9) * su);
+          int basey = dcy - (int)((wr + 9) * cu);
+          int blx = basex + (int)(5.0f * cu);
+          int bly = basey + (int)(5.0f * su);
+          int brx = basex - (int)(5.0f * cu);
+          int bry = basey - (int)(5.0f * su);
+          it.filled_triangle(tipx, tipy, blx, bly, brx, bry);
+          it.printf(dcx, dcy, id(mph_font), TextAlign::CENTER, "%d", (int)(id(wifi_wind) * 0.621371f + 0.5f));
+        }
+
+        // bars
+        auto bar = [&](int cx, const char *lab, float val, float vmin, float vmax, const char *v1, const char *v2, int w) {
+          int hw = w / 2;
+          int x0 = cx - hw, x1 = cx + hw, top = 104, bot = 186, wb = 3;
+          it.printf(cx, 89, id(label), TextAlign::TOP_CENTER, "%s", lab);
+          it.rectangle(x0, top, x1 - x0, bot - top);
+          float frac = (val - vmin) / (vmax - vmin);
+          if (frac < 0.0f) frac = 0.0f;
+          if (frac > 1.0f) frac = 1.0f;
+          int fillable = (bot - wb) - (top + wb);
+          int fy = (bot - wb) - (int)(frac * fillable);
+          it.filled_rectangle(x0 + wb, fy, (x1 - wb) - (x0 + wb), (bot - wb) - fy);
+          for (int i = 0; i < 11; i++) {
+            int ty = top + i * (bot - top) / 10;
+            it.line(x0 - 7, ty, x0 - 2, ty);
+          }
+          if (v2 != nullptr) {
+            it.printf(cx, 190, id(meas), TextAlign::TOP_CENTER, "%s", v1);
+            it.printf(cx, 204, id(small), TextAlign::TOP_CENTER, "%s", v2);
+          } else {
+            it.printf(cx, 190, id(meas), TextAlign::TOP_CENTER, "%s", v1);
+          }
+        };
+        char hum_buf[8], prs_buf[16], dpt_buf[8], feel_buf[8];
+        snprintf(hum_buf, sizeof(hum_buf), "%d%%", (int)(hum + 0.5f));
+        if (use_hpa) snprintf(prs_buf, sizeof(prs_buf), "%.1f hPa", pdisp);
+        else snprintf(prs_buf, sizeof(prs_buf), "%.2f in", pdisp);
+        snprintf(dpt_buf, sizeof(dpt_buf), "%d%s", (int)(dp_disp + 0.5f), tunit);
+        snprintf(feel_buf, sizeof(feel_buf), "%d%s", (int)(feel_disp + 0.5f), tunit);
+        bar(556, "HMD", hum, 0, 100, hum_buf, nullptr, 32);
+        bar(624, "PRS", pdisp, prs_lo, prs_hi, prs_buf, nullptr, 32);
+        bar(692, "DPT", dp_disp, dp_lo, dp_hi, dpt_buf, nullptr, 32);
+        bar(760, "FEEL", feel_disp, feel_lo, feel_hi, feel_buf, nullptr, 32);
+
+        // bottom ticks
+        it.line(156, 88, 156, 132);
+        if (use_wifi) it.line(div_x, 88, div_x, 132);
+        it.line(590, 88, 590, 132);
+        it.line(658, 88, 658, 132);
+        it.line(726, 88, 726, 132);
+
+      } else {
+        // ==================== OFFLINE LAYOUT ====================
+        // big icon
+        it.printf(82, 6, id(wicon_big), TextAlign::TOP_CENTER, "%s", wicon_glyph);
+
+        // big temperature with auto-size (1-2 digits big, 3+ digits / negative medium)
+        int tdeg = (int)(tdisp + 0.5f);
+        bool big = (tdeg >= 0 && tdeg < 100);
+        auto *tfont = big ? id(temp_big) : id(temp_med);
+        auto *uf = id(unit_big);
+        char tbuf[8];
+        snprintf(tbuf, sizeof(tbuf), "%d", tdeg);
+        int tx1, ty1, tw, th;
+        it.get_text_bounds(0, 0, tbuf, tfont, TextAlign::TOP_LEFT, &tx1, &ty1, &tw, &th);
+        int ocx = 286;
+        it.printf(ocx - tw / 2, 26, tfont, TextAlign::TOP_LEFT, tbuf);
+        it.printf(ocx + tw / 2 - 6, 26, uf, TextAlign::TOP_LEFT, "%s", tunit);
+
+        // zip code above the big temp (WiFi weather only)
+        if (id(weather_wifi))
+          it.printf(ocx, 4, id(day_font), TextAlign::TOP_CENTER, "%s", id(sd_reader)->get_zip().c_str());
+
+        // bars (all skinny)
+        auto obar = [&](int cx, const char *lab, float val, float vmin, float vmax, const char *v1, const char *v2) {
+          int w = 40;
+          int x0 = cx - 20, x1 = cx + 20, top = 55, bot = 185, wb = 4;
+          it.printf(cx, 41, id(label), TextAlign::TOP_CENTER, "%s", lab);
+          it.rectangle(x0, top, x1 - x0, bot - top);
+          float frac = (val - vmin) / (vmax - vmin);
+          if (frac < 0.0f) frac = 0.0f;
+          if (frac > 1.0f) frac = 1.0f;
+          int fillable = (bot - wb) - (top + wb);
+          int fy = (bot - wb) - (int)(frac * fillable);
+          it.filled_rectangle(x0 + wb, fy, (x1 - wb) - (x0 + wb), (bot - wb) - fy);
+          for (int i = 0; i < 11; i++) {
+            int ty = top + i * (bot - top) / 10;
+            it.line(x0 - 7, ty, x0 - 2, ty);
+          }
+          if (v2 != nullptr) {
+            it.printf(cx, 188, id(meas), TextAlign::TOP_CENTER, "%s", v1);
+            it.printf(cx, 204, id(small), TextAlign::TOP_CENTER, "%s", v2);
+          } else {
+            it.printf(cx, 192, id(meas), TextAlign::TOP_CENTER, "%s", v1);
+          }
+        };
+        char hum_buf[8], prs_buf[16], dpt_buf[8], tmp_buf[8];
+        snprintf(hum_buf, sizeof(hum_buf), "%d%%", (int)(hum + 0.5f));
+        if (use_hpa) snprintf(prs_buf, sizeof(prs_buf), "%.1f hPa", pdisp);
+        else snprintf(prs_buf, sizeof(prs_buf), "%.2f in", pdisp);
+        snprintf(dpt_buf, sizeof(dpt_buf), "%d%s", (int)(dp_disp + 0.5f), tunit);
+        snprintf(tmp_buf, sizeof(tmp_buf), "%d%s", (int)(tdisp + 0.5f), tunit);
+        obar(482, "HMD", hum, 0, 100, hum_buf, nullptr);
+        obar(545, "PRS", pdisp, prs_lo, prs_hi, prs_buf, nullptr);
+        obar(605, "DPT", dp_disp, dp_lo, dp_hi, dpt_buf, nullptr);
+        obar(665, "TMP", tdisp, tmp_lo, tmp_hi, tmp_buf, nullptr);
+
+        // status (right of last bar)
+        char rssi_buf2[16];
+        if (id(wifi_rssi) != 0)
+          snprintf(rssi_buf2, sizeof(rssi_buf2), "RSSI %ddBm", (int) id(wifi_rssi));
+        else
+          snprintf(rssi_buf2, sizeof(rssi_buf2), "RSSI --");
+        it.printf(792, 85, id(small), TextAlign::TOP_RIGHT, "%s", rssi_buf2);
+        it.printf(690, 148, id(src_icon_small), TextAlign::TOP_LEFT, "%s", src_glyph);
+        if (!use_wifi) {
+          float bf = (batt - 2.0f) / (3.0f - 2.0f);
+          if (bf < 0.0f) bf = 0.0f;
+          if (bf > 1.0f) bf = 1.0f;
+          int bb_w = 44, bb_h = 13;
+          int bbx0 = 792 - 2 - bb_w;
+          int bby = 107;
+          it.rectangle(bbx0, bby, bb_w, bb_h);
+          it.rectangle(bbx0 + bb_w, bby + 3, 3, bb_h - 6);
+          int fill_w = (int)((bb_w - 4) * bf + 0.5f);
+          it.filled_rectangle(bbx0 + 2, bby + 2, fill_w, bb_h - 4);
+          char bbuf[8];
+          snprintf(bbuf, sizeof(bbuf), "%.2fV", batt);
+          it.printf(bbx0 - 6, bby, id(small), TextAlign::TOP_RIGHT, bbuf);
+        } else {
+          it.printf(792, 107, id(small), TextAlign::TOP_RIGHT, "--");
+        }
+        if (!use_wifi) {
+          char mbuf[12];
+          snprintf(mbuf, sizeof(mbuf), "Move %d", move);
+          it.printf(792, 131, id(small), TextAlign::TOP_RIGHT, mbuf);
+        } else {
+          it.printf(792, 131, id(small), TextAlign::TOP_RIGHT, "--");
+        }
+        {
+          char ubuf[16];
+          if (use_wifi) {
+            if (id(last_wifi_millis) > 0)
+              snprintf(ubuf, sizeof(ubuf), "WiFi %us", (unsigned) wifi_upd_s);
+            else
+              snprintf(ubuf, sizeof(ubuf), "WiFi");
+          } else if (have_ruuvi) {
+            snprintf(ubuf, sizeof(ubuf), "Upd %us ago", (unsigned) upd_s);
+          } else if (have_last) {
+            snprintf(ubuf, sizeof(ubuf), "Stored");
+          } else {
+            snprintf(ubuf, sizeof(ubuf), "No data");
+          }
+          it.printf(792, 147, id(small), TextAlign::TOP_RIGHT, ubuf);
+        }
+      }
+
+      // ============ BOTTOM STRIP: 7-day forecast (WiFi) or 14-day pressure graph (Ruuvi) ============
+      if (use_wifi) {
+        int fgx0 = 8, fgx1 = 784, fline = 214;
+        it.line(fgx0, fline, fgx1, fline);
+        int ncols = 7;
+        int fcolw = (fgx1 - fgx0) / ncols;
+        for (int si = 1; si < ncols; si++) {
+          int sepx = fgx0 + si * fcolw;
+          it.line(sepx, fline, sepx, fline + 29);
+        }
+        static const char *DAYS3[] = {"SUN","MON","TUE","WED","THU","FRI","SAT"};
+        int fdow0 = t.is_valid() ? (t.day_of_week - 1) : 0;
+        char fbuf[8];
+        for (int fi = 0; fi < ncols; fi++) {
+          int fx0 = fgx0 + fi * fcolw;
+          int hi_disp = (int)(id(daily_max)[fi] * (use_c ? 1.0f : 1.8f) + (use_c ? 0.0f : 32.0f) + 0.5f);
+          int lo_disp = (int)(id(daily_min)[fi] * (use_c ? 1.0f : 1.8f) + (use_c ? 0.0f : 32.0f) + 0.5f);
+          int pcode = id(daily_code)[fi];
+          int ppct = id(daily_precip)[fi];
+          bool tall = (pcode == 0) || (pcode >= 51 && pcode <= 67) || (pcode >= 71 && pcode <= 77) || (pcode >= 80 && pcode <= 82) || (pcode >= 95 && pcode <= 99);
+          it.printf(fx0 + 8, fline, tall ? id(wicon_small2) : id(wicon_small), TextAlign::TOP_LEFT, "%s", wmo_glyph(pcode));
+          // precipitation chance (rain/snow/thunder days), top-left corner
+          if ((pcode == 51 || pcode == 71 || pcode == 95) && ppct > 0) {
+            snprintf(fbuf, sizeof(fbuf), "%d%%", ppct);
+            it.printf(fx0 + 2, fline + 2, id(flo), TextAlign::TOP_LEFT, "%s", fbuf);
+          }
+          it.printf(fx0 + 58, fline + 2, id(fday), TextAlign::TOP_LEFT, "%s", (fi == 0) ? "TODAY" : DAYS3[(fdow0 + fi) % 7]);
+          snprintf(fbuf, sizeof(fbuf), "%d\u00B0", hi_disp);
+          it.printf(fx0 + 83, fline + 21, id(fhi), TextAlign::TOP_CENTER, "%s", fbuf);
+          snprintf(fbuf, sizeof(fbuf), "%d\u00B0", lo_disp);
+          it.printf(fx0 + 83, fline + 40, id(flo), TextAlign::TOP_CENTER, "%s", fbuf);
+        }
+      } else {
+        int gx0 = 8, gy0 = 222, gx1 = 784, gy1 = 268;
+        it.printf(gx0 + 4, gy0 - 2, id(graph), TextAlign::TOP_LEFT, "14 DAYS");
+        it.line(gx0, gy1, gx1, gy1);
+        it.line(gx0, gy0, gx0, gy1);
+        // min/max from the history (padded), converted to the display unit
+        float gmin = 948.0f, gmax = 1084.0f;
+        if (phc >= 2) {
+          gmin = phist[0]; gmax = phist[0];
+          for (uint16_t i = 1; i < phc; i++) {
+            if (phist[i] < gmin) gmin = phist[i];
+            if (phist[i] > gmax) gmax = phist[i];
+          }
+          float gpad = (gmax - gmin) * 0.25f + 1.0f;
+          gmin -= gpad; gmax += gpad;
+        }
+        if (!use_hpa) { gmin *= 0.02953f; gmax *= 0.02953f; }
+        // polyline
+        if (phc >= 2) {
+          int px = 0, py = 0;
+          for (uint16_t i = 0; i < phc; i++) {
+            float v = phist[i];
+            if (!use_hpa) v *= 0.02953f;
+            int x = gx0 + (int)((uint32_t) i * (gx1 - gx0) / (phc - 1));
+            int y = gy1 - (int)((v - gmin) / (gmax - gmin) * (gy1 - gy0));
+            if (y < gy0) y = gy0;
+            if (y > gy1) y = gy1;
+            if (i > 0) it.line(px, py, x, y);
+            px = x; py = y;
+          }
+        }
+        char gbuf[16];
+        snprintf(gbuf, sizeof(gbuf), "%.1f", gmin);
+        it.printf(gx0, 250, id(graph), TextAlign::TOP_LEFT, "%s", gbuf);
+        snprintf(gbuf, sizeof(gbuf), "%.1f", gmax);
+        it.printf(gx0, gy0 - 10, id(graph), TextAlign::TOP_LEFT, "%s", gbuf);
+      }
